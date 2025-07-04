@@ -1,0 +1,96 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Módulo de Autoevaluación - Horizontal 2025</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; background-color: #f9f9f9; color: #333; }
+    h1 { text-align: center; }
+    .question-box { margin-bottom: 20px; }
+    .option { display: block; padding: 8px; margin: 6px 0; background: #e3e3e3; border-radius: 5px; cursor: pointer; }
+    .option:hover { background: #d0d0d0; }
+    .button { padding: 10px 20px; background: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer; }
+    .button:disabled { background: #aaa; }
+    .result { font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>Autoevaluación Horizontal 2025</h1>
+  <div id="app">
+    <div id="level-selection">
+      <p><strong>Selecciona tu modo de práctica:</strong></p>
+      <button class="button" onclick="startQuiz('R', 20000)">🟢 Modo Rápido (20s)</button>
+      <button class="button" onclick="startQuiz('E', 30000)">🔵 Modo Estándar (30s)</button>
+      <button class="button" onclick="startQuiz('P', 45000)">🟠 Modo Profesional (45s)</button>
+    </div>
+    <div id="question-container" class="question-box" style="display:none;"></div>
+    <button id="next-btn" class="button" onclick="nextQuestion()" disabled style="display:none;">Siguiente</button>
+    <div id="result" class="result"></div>
+  </div>
+
+  <script>
+    let allQuestions = [];
+    let questions = [];
+    let currentQuestion = 0;
+    let score = 0;
+    let timer;
+    let timePerQuestion = 30000;
+
+    async function loadQuestions() {
+      const response = await fetch('./DBH25_Limpio.json');
+      allQuestions = await response.json();
+    }
+
+    function startQuiz(level, time) {
+      timePerQuestion = time;
+      questions = allQuestions.filter(q => q['Nivel'] === level).slice(0, 15);
+      document.getElementById('level-selection').style.display = 'none';
+      document.getElementById('question-container').style.display = 'block';
+      document.getElementById('next-btn').style.display = 'inline-block';
+      showQuestion();
+    }
+
+    function showQuestion() {
+      clearTimeout(timer);
+      const question = questions[currentQuestion];
+      const container = document.getElementById('question-container');
+      container.innerHTML = '<strong>Pregunta ' + (currentQuestion + 1) + ':</strong><br>' + question['Enunciado'];
+      ['OpcionA', 'OpcionB', 'OpcionC', 'OpcionD'].forEach(opt => {
+        const btn = document.createElement('button');
+        btn.innerText = question[opt];
+        btn.className = 'option';
+        btn.onclick = () => selectAnswer(btn.innerText, question['RespuestaCorrecta']);
+        container.appendChild(btn);
+      });
+
+      // Temporizador dinámico
+      timer = setTimeout(() => {
+        document.getElementById('next-btn').disabled = false;
+        alert('Tiempo agotado');
+      }, timePerQuestion);
+    }
+
+    function selectAnswer(selected, correct) {
+      clearTimeout(timer);
+      document.getElementById('next-btn').disabled = false;
+      if (selected === correct) score++;
+    }
+
+    function nextQuestion() {
+      currentQuestion++;
+      if (currentQuestion < questions.length) {
+        document.getElementById('next-btn').disabled = true;
+        showQuestion();
+      } else {
+        document.getElementById('question-container').innerHTML = '';
+        document.getElementById('next-btn').style.display = 'none';
+        document.getElementById('result').innerText = 'Resultado Final: ' + score + ' de ' + questions.length + ' preguntas correctas.';
+      }
+    }
+
+    loadQuestions();
+  </script>
+</body>
+</html>
