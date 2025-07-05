@@ -1,0 +1,668 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Módulo de Autoevaluación Docente - Primaria</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: Arial, sans-serif; }
+    .hidden { display: none; }
+    .progress-bar { transition: width 0.1s linear; }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
+  <div id="app" class="max-w-2xl w-full bg-white rounded-lg shadow-lg p-6">
+    <!-- Start Screen -->
+    <div id="start-screen">
+      <h1 class="text-2xl font-bold text-center mb-4">Autoevaluación Docente - Primaria</h1>
+      <p class="text-center mb-6">Selecciona un modo de práctica:</p>
+      <div class="grid gap-4">
+        <button onclick="startQuiz('Rápido')" class="bg-green-500 text-white py-3 rounded-lg text-lg hover:bg-green-600">Modo Rápido (20s)</button>
+        <button onclick="startQuiz('Estándar')" class="bg-blue-500 text-white py-3 rounded-lg text-lg hover:bg-blue-600">Modo Estándar (30s)</button>
+        <button onclick="startQuiz('Profesional')" class="bg-orange-500 text-white py-3 rounded-lg text-lg hover:bg-orange-600">Modo Profesional (45s)</button>
+      </div>
+      <button onclick="showAdminLogin()" class="mt-4 text-sm text-gray-500 hover:underline">Acceso Administrador</button>
+    </div>
+
+    <!-- Quiz Screen -->
+    <div id="quiz-screen" class="hidden">
+      <h2 id="quiz-title" class="text-xl font-semibold mb-4"></h2>
+      <div class="w-full bg-gray-200 rounded-full h-2.5 mb-4">
+        <div id="progress-bar" class="bg-blue-600 h-2.5 rounded-full progress-bar" style="width: 0%"></div>
+      </div>
+      <p id="timer" class="text-right mb-4"></p>
+      <p id="question-text" class="text-lg mb-4"></p>
+      <div id="options" class="grid gap-2"></div>
+      <p id="feedback" class="mt-4 text-sm text-gray-600 hidden"></p>
+      <button id="next-btn" onclick="nextQuestion()" class="hidden mt-4 bg-blue-500 text-white py-2 px-4 rounded-lg hover:bg-blue-600">Siguiente</button>
+    </div>
+
+    <!-- Results Screen -->
+    <div id="results-screen" class="hidden">
+      <h2 class="text-xl font-semibold mb-4">Resultados</h2>
+      <p id="score" class="text-lg mb-4"></p>
+      <button onclick="restartQuiz()" class="bg-blue-500 text-white py-2 px-4 rounded-lg hover:bg-blue-600">Volver a Empezar</button>
+    </div>
+
+    <!-- Admin Login -->
+    <div id="admin-login" class="hidden">
+      <h2 class="text-xl font-semibold mb-4">Acceso Administrador</h2>
+      <input id="admin-password" type="password" placeholder="Contraseña" class="border p-2 w-full mb-4 rounded">
+      <button onclick="loginAdmin()" class="bg-blue-500 text-white py-2 px-4 rounded-lg hover:bg-blue-600">Ingresar</button>
+      <button onclick="showStartScreen()" class="mt-2 text-sm text-gray-500 hover:underline">Volver</button>
+    </div>
+
+    <!-- Admin Panel -->
+    <div id="admin-panel" class="hidden">
+      <h2 class="text-xl font-semibold mb-4">Panel Administrativo</h2>
+      <div class="mb-4">
+        <label class="mr-2">Filtrar por nivel:</label>
+        <select id="level-filter" onchange="renderQuestions()">
+          <option value="all">Todos</option>
+          <option value="R">Rápido</option>
+          <option value="E">Estándar</option>
+          <option value="P">Profesional</option>
+        </select>
+      </div>
+      <div id="question-list" class="max-h-96 overflow-y-auto"></div>
+      <button onclick="showStartScreen()" class="mt-4 bg-blue-500 text-white py-2 px-4 rounded-lg hover:bg-blue-600">Volver</button>
+    </div>
+  </div>
+
+  <script>
+    // Simple hash function for password
+    function simpleHash(str) {
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) {
+        hash = ((hash << 5) - hash) + str.charCodeAt(i);
+        hash |= 0; // Convert to 32bit integer
+      }
+      return hash;
+    }
+
+    // Question Bank (From JSON, normalized)
+    const questions = [
+      {
+        id: "PHC2-R-001",
+        level: "R",
+        text: "¿Qué principio del Artículo 3° Constitucional establece que la educación debe ser libre de doctrinas religiosas?",
+        options: ["Gratuidad", "Laicidad", "Obligatoriedad", "Universalidad"],
+        correct: 1,
+        feedback: "La laicidad es el principio que establece que la educación debe ser ajena a cualquier doctrina religiosa."
+      },
+      {
+        id: "PHC2-R-002",
+        level: "R",
+        text: "¿Qué documento desarrolla y especifica los principios y directrices que rigen el sistema educativo nacional bajo la óptica de la NEM, en consonancia con el Artículo 3° Constitucional?",
+        options: ["Código Penal", "Ley General de Educación (LGE)", "Reglamento Interno Escolar", "Ley Federal del Trabajo"],
+        correct: 1,
+        feedback: "La Ley General de Educación (LGE) es el cuerpo normativo que desarrolla los preceptos del Artículo 3° Constitucional y rige el sistema educativo bajo la NEM."
+      },
+      {
+        id: "PHC2-R-003",
+        level: "R",
+        text: "¿Qué principio de la NEM implica que el docente debe ver a cada estudiante como un ser único con potencialidades, respetando sus derechos y emociones?",
+        options: ["Pensamiento Crítico", "Contextualización", "Humanismo Radical", "Formación Integral"],
+        correct: 2,
+        feedback: "El Humanismo Radical es el principio que pone la dignidad de la persona al centro de la intervención docente, respetando a cada estudiante como un ser único."
+      },
+      {
+        id: "PHC2-R-004",
+        level: "R",
+        text: "¿Cuál es el propósito principal de la planeación didáctica situada en la NEM?",
+        options: ["Cumplir con un requisito administrativo", "Hacer que el aprendizaje sea significativo y relevante para los estudiantes", "Estandarizar la enseñanza en todos los contextos", "Limitar la creatividad del docente"],
+        correct: 1,
+        feedback: "La planeación didáctica situada busca que el aprendizaje sea significativo y relevante para los estudiantes, al vincularlo con su realidad y contexto."
+      },
+      {
+        id: "PHC2-R-005",
+        level: "R",
+        text: "¿Qué enfoque pedagógico postula que el conocimiento se construye socialmente a través de la interacción del estudiante con su entorno, sus pares y su cultura?",
+        options: ["Conductismo", "Socio constructivismo", "Pedagogía Tradicional", "Neuroeducación"],
+        correct: 1,
+        feedback: "El socio constructivismo es el enfoque que sostiene que el conocimiento se construye activamente de manera social, a través de la interacción con el entorno y los pares."
+      },
+      {
+        id: "PHC2-R-006",
+        level: "R",
+        text: "¿Qué función del Consejo Escolar (CE) implica promover ambientes escolares libres de violencia y fomentar el diálogo y el respeto?",
+        options: ["Gestión de Recursos", "Transparencia", "Cultura de Paz", "Seguimiento del PEMC"],
+        correct: 2,
+        feedback: "La función de Cultura de Paz del CE busca promover ambientes escolares armónicos, libres de violencia, a través del diálogo y el respeto."
+      },
+      {
+        id: "PHC2-R-007",
+        level: "R",
+        text: "¿Qué fase del modelo operativo de los proyectos sociocomunitarios implica la identificación participativa de una problemática o necesidad real de la comunidad?",
+        options: ["Planeación", "Ejecución", "Diagnóstico", "Evaluación"],
+        correct: 2,
+        feedback: "El Diagnóstico es la fase inicial donde se identifica de manera participativa una problemática o necesidad real de la comunidad."
+      },
+      {
+        id: "PHC2-R-008",
+        level: "R",
+        text: "¿Qué ley establece que el ingreso, promoción, reconocimiento y permanencia de los docentes se realizará mediante procesos que garanticen la idoneidad de sus conocimientos y aptitudes?",
+        options: ["Ley Federal del Trabajo", "Ley General de Educación (LGE)", "Constitución Política de los Estados Unidos Mexicanos (CPEUM) Art. 3°", "Ley de los Derechos Humanos"],
+        correct: 2,
+        feedback: "El Artículo 3° de la CPEUM es la base legal que establece los procesos para el ingreso, promoción, reconocimiento y permanencia de los docentes, garantizando su idoneidad."
+      },
+      {
+        id: "PHC2-R-009",
+        level: "R",
+        text: "Según Piaget, ¿qué son la asimilación y la acomodación?",
+        options: ["Etapas del desarrollo", "Procesos de integración y modificación de esquemas cognitivos", "Tipos de evaluación", "Habilidades motoras"],
+        correct: 1,
+        feedback: "La asimilación y la acomodación son los procesos mediante los cuales los individuos integran nueva información o modifican sus esquemas cognitivos para adaptarse a ella."
+      },
+      {
+        id: "PHC2-R-010",
+        level: "R",
+        text: "¿Qué tipo de ambiente escolar debe garantizar la Ley General de los Derechos de Niñas, Niños y Adolescentes (LGDNNA)?",
+        options: ["Solo académico", "Competitivo", "Protector y libre de violencia", "Estrictamente disciplinario"],
+        correct: 2,
+        feedback: "La LGDNNA establece la obligación de crear ambientes escolares protectores y libres de violencia para el desarrollo integral de niñas, niños y adolescentes."
+      },
+      {
+        id: "PHC2-R-011",
+        level: "R",
+        text: "¿Qué busca el Diseño Universal para el Aprendizaje (DUA) en el eje de Inclusión de la NEM?",
+        options: ["Estandarizar la enseñanza para todos", "Diseñar actividades y materiales accesibles y significativos para la diversidad de estudiantes", "Excluir a alumnos con necesidades especiales", "Limitar las opciones de aprendizaje"],
+        correct: 1,
+        feedback: "El DUA busca diseñar actividades y materiales que sean accesibles y significativos para la mayor diversidad de estudiantes posible desde un inicio, eliminando barreras."
+      },
+      {
+        id: "PHC2-R-012",
+        level: "R",
+        text: "¿Qué enfoque pedagógico postula que el conocimiento es significativo cuando se adquiere y aplica en contextos auténticos y relevantes para el estudiante?",
+        options: ["Aprendizaje Memorístico", "Aprendizaje Situado", "Aprendizaje por Repetición", "Aprendizaje Abstracto"],
+        correct: 1,
+        feedback: "El Aprendizaje Situado postula que el conocimiento es más significativo cuando se adquiere y aplica en contextos auténticos y relevantes para el estudiante."
+      },
+      {
+        id: "PHC2-R-013",
+        level: "R",
+        text: "¿Cuál es el propósito principal de la retroalimentación en la evaluación formativa de la NEM?",
+        options: ["Asignar una calificación", "Identificar errores para sancionar", "Ofrecer información para que el estudiante ajuste sus estrategias de aprendizaje", "Comparar el rendimiento entre alumnos"],
+        correct: 2,
+        feedback: "La retroalimentación en la evaluación formativa es descriptiva, específica y orientadora, buscando que el estudiante ajuste sus estrategias de aprendizaje para la mejora."
+      },
+      {
+        id: "PHC2-R-014",
+        level: "R",
+        text: "¿Qué beneficio principal aporta el juego como estrategia de aprendizaje al generar disfrute y curiosidad?",
+        options: ["Desmotivación", "Aumento de la memorización", "Fomento de la motivación intrínseca", "Reducción de la participación"],
+        correct: 2,
+        feedback: "El juego genera disfrute y curiosidad, lo que aumenta la motivación intrínseca y el compromiso con el aprendizaje."
+      },
+      {
+        id: "PHC2-R-015",
+        level: "R",
+        text: "¿Cuál es el objetivo principal de las Comunidades Profesionales de Aprendizaje (CPA) en la NEM?",
+        options: ["Realizar trámites administrativos", "Promover la competencia individual", "Reflexionar sobre la práctica y construir conocimiento pedagógico colaborativo", "Organizar eventos sociales"],
+        correct: 2,
+        feedback: "Las CPA son colectivos docentes que buscan la reflexión, transformación y aprendizaje colaborativo para la mejora continua de la enseñanza."
+      },
+      {
+        id: "PHC2-R-016",
+        level: "R",
+        text: "¿Qué señal de acoso escolar en las víctimas se relaciona con cambios repentinos en el estado de ánimo y temor a ir a la escuela?",
+        options: ["Comportamiento desafiante", "Necesidad de dominar", "Cambios de humor y miedo a ir a la escuela", "Aumento de la participación"],
+        correct: 2,
+        feedback: "Los cambios de humor y el miedo a ir a la escuela son señales comunes que pueden indicar que un alumno está siendo víctima de acoso escolar."
+      },
+      {
+        id: "PHC2-R-017",
+        level: "R",
+        text: "¿Qué tipo de nombramiento se requiere comúnmente para participar en la Promoción Horizontal, según el Acuerdo 14/08/23?",
+        options: ["Temporal", "Interino", "Definitivo", "Por honorarios"],
+        correct: 2,
+        feedback: "El nombramiento definitivo es un requisito común y fundamental para acceder a la Promoción Horizontal."
+      },
+      {
+        id: "PHC2-R-018",
+        level: "R",
+        text: "Según Bandura, ¿qué concepto se refiere a la creencia de una persona en su capacidad para ejecutar con éxito una conducta o alcanzar un resultado?",
+        options: ["Modelado", "Autorregulación", "Autoeficacia", "Aprendizaje por Observación"],
+        correct: 2,
+        feedback: "La Autoeficacia es la creencia de una persona en su propia capacidad para realizar una tarea o alcanzar un objetivo, lo que influye en su motivación y persistencia."
+      },
+      {
+        id: "PHC2-R-019",
+        level: "R",
+        text: "¿Qué derecho de niñas, niños y adolescentes promueve la LGDNNA que se alinea con el fomento del protagonismo del estudiante en la NEM?",
+        options: ["Derecho a la privacidad", "Derecho a la participación", "Derecho a la información", "Derecho a la recreación"],
+        correct: 1,
+        feedback: "La LGDNNA promueve el derecho a la participación de niñas, niños y adolescentes en los asuntos que les afectan, incluyendo los procesos educativos, lo que se alinea con el protagonismo del estudiante en la NEM."
+      },
+      {
+        id: "PHC2-R-020",
+        level: "R",
+        text: "¿Qué busca el eje 'Artes y Experiencias Estéticas' al promover la integración de las artes en el currículo?",
+        options: ["Que sean una asignatura aislada", "Que enriquezcan el aprendizaje de otros campos formativos", "Que solo se enseñen técnicas", "Que se limiten a la memorización"],
+        correct: 1,
+        feedback: "El eje busca que las artes se integren y enriquezcan el aprendizaje de otros campos formativos, actuando como un eje transversal."
+      },
+      {
+        id: "PHC2-R-021",
+        level: "R",
+        text: "En el proyecto 'Salvemos Nuestro Río', los alumnos investigan las causas de la contaminación. ¿Qué Campo Formativo de la NEM está siendo principalmente abordado?",
+        options: ["Lenguajes", "Saberes y Pensamiento Científico", "Ética, Naturaleza y Sociedades", "De lo Humano y lo Comunitario"],
+        correct: 1,
+        feedback: "La investigación de causas de contaminación se alinea directamente con el Campo Formativo de Saberes y Pensamiento Científico."
+      },
+      {
+        id: "PHC2-R-022",
+        level: "R",
+        text: "¿Cuál de los siguientes Campos Formativos se enfoca en el desarrollo integral del individuo en relación con su comunidad, la identidad personal y colectiva, y el bienestar?",
+        options: ["Lenguajes", "Saberes y Pensamiento Científico", "Ética, Naturaleza y Sociedades", "De lo Humano y lo Comunitario"],
+        correct: 3,
+        feedback: "El Campo Formativo 'De lo Humano y lo Comunitario' se centra en el desarrollo integral del individuo en relación con su comunidad, identidad y bienestar."
+      },
+      {
+        id: "PHC2-R-023",
+        level: "R",
+        text: "Cuando un docente no da la respuesta directa a un alumno que se estanca en una investigación, sino que le pregunta '¿Dónde podrías buscar esa información?', está aplicando mediación en:",
+        options: ["La lectura", "Un proyecto", "Un conflicto", "La evaluación"],
+        correct: 1,
+        feedback: "Al guiar al alumno en la búsqueda de información para un proyecto, el docente está aplicando mediación en el contexto de un proyecto."
+      },
+      {
+        id: "PHC2-R-024",
+        level: "R",
+        text: "Según la conclusión del Tema 6, ¿qué emerge como la 'columna vertebral operativa de la NEM'?",
+        options: ["El trabajo individual del docente", "El Consejo Escolar (CE)", "La dirección escolar", "El sindicato"],
+        correct: 1,
+        feedback: "El Consejo Escolar (CE) emerge como la columna vertebral operativa de la NEM, siendo el espacio donde la comunidad se une a la escuela para la toma de decisiones y la gestión participativa."
+      },
+      {
+        id: "PHC2-R-025",
+        level: "R",
+        text: "En la Fase 2 del plan de acción ante acoso escolar ('Actuación inicial del docente'), ¿qué acción se debe realizar después de detener el acoso y garantizar la seguridad de la víctima?",
+        options: ["Notificar a los padres inmediatamente", "Separar a los involucrados", "Ignorar la situación", "Enviar al agresor a casa"],
+        correct: 1,
+        feedback: "Después de detener el acoso y garantizar la seguridad de la víctima, la siguiente acción en la Fase 2 es separar a los involucrados para evitar que la situación escale."
+      },
+      {
+        id: "PHC2-R-026",
+        level: "R",
+        text: "El Proyecto Horizontal 2025 es una 'hoja de ruta operativa, ética y transformadora' para la práctica profesional de los docentes porque:",
+        options: ["Es solo un mapa de estudio", "Es un modelo que busca empoderar a los maestros como agentes de cambio", "Es un trámite burocrático", "Es una guía rígida"],
+        correct: 1,
+        feedback: "El Proyecto Horizontal 2025 es un modelo que busca empoderar a los maestros para que asuman su rol protagónico en la construcción de la educación del futuro."
+      },
+      {
+        id: "PHC2-R-027",
+        level: "R",
+        text: "Según Vygotsky, el 'andamiaje' es un proceso de apoyo:",
+        options: ["Permanente y sin cambios", "Temporal y ajustado a la autonomía del aprendiz", "Que solo se da entre pares", "Que solo se da del adulto al niño"],
+        correct: 1,
+        feedback: "El andamiaje, según Vygotsky, es un apoyo temporal que se ajusta a medida que el aprendiz desarrolla autonomía."
+      },
+      {
+        id: "PHC2-R-028",
+        level: "R",
+        text: "¿Qué párrafo del Artículo 3° Constitucional compromete al docente a no conformarse con prácticas mínimas y a buscar siempre la mejora de sus procesos pedagógicos?",
+        options: ["Párrafo 1", "Párrafo 4", "Párrafo 7", "Párrafo 8"],
+        correct: 2,
+        feedback: "El Párrafo 7 del Artículo 3° Constitucional establece el compromiso con la mejora continua y la excelencia de la práctica pedagógica."
+      },
+      {
+        id: "PHC2-R-029",
+        level: "R",
+        text: "Los Ejes Articuladores de la NEM son principios transversales que buscan conectar los conocimientos de los campos formativos con:",
+        options: ["La estandarización educativa", "La realidad social, cultural y personal de los estudiantes", "La memorización de contenidos", "Las asignaturas aisladas"],
+        correct: 1,
+        feedback: "Los Ejes Articuladores buscan conectar los conocimientos de los campos formativos con la realidad social, cultural y personal de los estudiantes, promoviendo una formación integral."
+      },
+      {
+        id: "PHC2-R-030",
+        level: "R",
+        text: "¿Qué principio de la NEM implica que el docente debe fomentar la capacidad de los estudiantes para analizar, cuestionar y proponer soluciones a problemas reales?",
+        options: ["Humanismo Radical", "Pensamiento Crítico como Eje", "Contextualización y Pertinencia", "Formación Integral"],
+        correct: 1,
+        feedback: "El Pensamiento Crítico como Eje es el principio que guía al docente a fomentar la capacidad de los estudiantes para analizar, cuestionar y proponer soluciones a problemas reales."
+      },
+      {
+        id: "PHC2-R-031",
+        level: "R",
+        text: "¿Qué característica de las Progresiones de Aprendizaje (PDA) implica que los conceptos se retoman y profundizan a lo largo de las fases con mayor complejidad?",
+        options: ["Lineales", "Rígidas", "Graduales y Continuas", "Estáticas"],
+        correct: 2,
+        feedback: "Las PDA son graduales y continuas, mostrando la evolución del aprendizaje en espiral, donde los conceptos se retoman y profundizan con mayor complejidad."
+      },
+      {
+        id: "PHC2-R-032",
+        level: "R",
+        text: "¿Qué tipo de problema o desafío es el centro del Aprendizaje Basado en Proyectos (ABP)?",
+        options: ["Abstracto y sin solución", "Auténtico y complejo", "Teórico y sin aplicación", "Individual y sin colaboración"],
+        correct: 1,
+        feedback: "El ABP se organiza en torno a la resolución de una pregunta, problema o desafío auténtico y complejo, que emerge de la realidad."
+      },
+      {
+        id: "PHC2-R-033",
+        level: "R",
+        text: "¿Qué fase del modelo operativo del Consejo Escolar (CE) implica la rendición de cuentas periódica sobre el uso de recursos y avances de proyectos?",
+        options: ["Diagnóstico", "Planeación", "Transparencia", "Ejecución"],
+        correct: 2,
+        feedback: "La Transparencia es la fase donde se rinde cuentas periódicamente sobre el uso de recursos y avances de proyectos."
+      },
+      {
+        id: "PHC2-R-034",
+        level: "R",
+        text: "¿Qué principio de la corresponsabilidad educativa implica que todas las voces de la comunidad educativa tienen derecho a participar en las decisiones que afectan la escuela?",
+        options: ["Respeto", "Reconocimiento de Saberes", "Democracia Participativa", "Articulación"],
+        correct: 2,
+        feedback: "La Democracia Participativa implica que todas las voces de la comunidad educativa tienen derecho a participar en las decisiones que afectan la escuela."
+      },
+      {
+        id: "PHC2-R-035",
+        level: "R",
+        text: "¿Qué elemento multifactorial en la Promoción Horizontal valora la trayectoria y el tiempo de servicio del docente en la función?",
+        options: ["Formación Profesional", "Antigüedad en el Servicio", "Reconocimiento al Buen Desempeño", "Apreciación del Desempeño"],
+        correct: 1,
+        feedback: "La Antigüedad en el Servicio es el elemento multifactorial que valora la trayectoria y el tiempo de servicio del docente en la función."
+      },
+      {
+        id: "PHC2-R-036",
+        level: "R",
+        text: "Según Piaget, ¿cómo se concibe al niño en el proceso de aprendizaje?",
+        options: ["Como un receptor pasivo", "Como un ser que solo memoriza", "Como un constructor activo de su propio conocimiento", "Como un ser que solo imita"],
+        correct: 2,
+        feedback: "Piaget concibe al niño como un constructor activo de su propio conocimiento a través de la interacción con su entorno."
+      },
+      {
+        id: "PHC2-R-037",
+        level: "R",
+        text: "La conclusión del Tema 1 afirma que el marco normativo es una 'herramienta viva' y que los docentes son los principales garantes de:",
+        options: ["La burocracia educativa", "El derecho humano a la educación", "La imposición de reglas", "La memorización de leyes"],
+        correct: 1,
+        feedback: "La conclusión del Tema 1 establece que el marco normativo es una herramienta viva y que los docentes son los principales garantes del derecho humano a la educación."
+      },
+      {
+        id: "PHC2-R-038",
+        level: "R",
+        text: "¿Qué busca el eje articulador 'Interculturalidad Crítica' al promover el diálogo equitativo y el respeto a las identidades?",
+        options: ["Solo la coexistencia de culturas", "El análisis crítico de las relaciones de poder y la valoración de la diversidad", "La imposición de una cultura dominante", "La eliminación de las diferencias culturales"],
+        correct: 1,
+        feedback: "La Interculturalidad Crítica busca un análisis profundo de las relaciones de poder y la promoción del diálogo equitativo, valorando la diversidad como riqueza."
+      },
+      {
+        id: "PHC2-R-039",
+        level: "R",
+        text: "¿Qué documento normativo refuerza explícitamente el aprendizaje situado al introducir el codiseño curricular y metodologías como el Aprendizaje Basado en Proyectos Comunitarios?",
+        options: ["Ley Federal del Trabajo", "Acuerdo 08/08/23 (o Plan de Estudios de Educación Básica)", "Código Civil", "Reglamento de Tránsito"],
+        correct: 1,
+        feedback: "El Acuerdo 08/08/23 (o Plan de Estudios de Educación Básica) refuerza normativamente el aprendizaje situado al introducir el codiseño curricular y metodologías como el ABPC."
+      },
+      {
+        id: "PHC2-R-040",
+        level: "R",
+        text: "¿Qué tipo de evaluación en la NEM ocurre 'durante' todo el proceso de aprendizaje y busca acompañar al estudiante?",
+        options: ["Sumativa", "Diagnóstica", "Formativa", "Final"],
+        correct: 2,
+        feedback: "La evaluación formativa ocurre durante todo el proceso de aprendizaje, acompañando al estudiante y ofreciendo retroalimentación oportuna."
+      },
+      {
+        id: "PHC2-R-041",
+        level: "R",
+        text: "La mediación pedagógica es el conjunto de acciones que el docente utiliza para:",
+        options: ["Dar todas las respuestas directamente", "Ignorar las dificultades del estudiante", "Tender puentes entre el conocimiento del estudiante y los nuevos saberes", "Imponer su propia forma de pensar"],
+        correct: 2,
+        feedback: "La mediación pedagógica busca tender puentes entre el conocimiento del estudiante y los nuevos saberes, guiándolo para que los descubra."
+      },
+      {
+        id: "PHC2-R-042",
+        level: "R",
+        text: "El trabajo colegiado docente es la 'espina dorsal pedagógica de la NEM' porque es esencial para:",
+        options: ["La burocracia escolar", "La reflexión y mejora profesional colaborativa", "La imposición de decisiones", "La competencia individual"],
+        correct: 1,
+        feedback: "El trabajo colegiado docente es esencial para la reflexión, la mejora continua y la unificación de criterios en la NEM."
+      },
+      {
+        id: "PHC2-R-043",
+        level: "R",
+        text: "¿Qué estrategia de prevención del acoso escolar implica integrar los valores de paz, respeto y diálogo en todas las actividades escolares?",
+        options: ["Talleres con familias", "Protocolos activos", "Círculos de diálogo", "Cultura de paz permanente"],
+        correct: 3,
+        feedback: "La Cultura de Paz Permanente implica integrar los valores de paz, respeto y diálogo en todas las actividades escolares para prevenir el acoso."
+      },
+      {
+        id: "PHC2-R-044",
+        level: "R",
+        text: "¿Qué busca la Promoción Horizontal al valorar la formación continua en temas de inclusión o pensamiento crítico?",
+        options: ["Solo aumentar el salario", "Reconocer al docente que encarna los principios de la NEM", "Ignorar la calidad de la práctica", "Fomentar la competencia desleal"],
+        correct: 1,
+        feedback: "La Promoción Horizontal busca reconocer al docente que encarna los principios de la NEM, valorando su formación continua en temas relevantes para el nuevo modelo educativo."
+      },
+      {
+        id: "PHC2-R-045",
+        level: "R",
+        text: "Según Bruner, ¿qué tipo de aprendizaje implica que los estudiantes construyen su propio conocimiento explorando y descubriendo relaciones?",
+        options: ["Aprendizaje por Recepción", "Aprendizaje Memorístico", "Aprendizaje por Descubrimiento", "Aprendizaje Pasivo"],
+        correct: 2,
+        feedback: "El Aprendizaje por Descubrimiento de Bruner enfatiza que los estudiantes construyen su propio conocimiento explorando y descubriendo conceptos por sí mismos."
+      },
+      {
+        id: "PHC2-R-046",
+        level: "R",
+        text: "¿Cuál de las siguientes es una aplicación práctica del marco normativo en la gestión docente, según el Tema 1?",
+        options: ["Ignorar los derechos laborales", "Diseño de proyectos de aula sin relación con derechos humanos", "Activación de redes de apoyo institucional", "Imposición de normas sin participación"],
+        correct: 2,
+        feedback: "La activación de redes de apoyo institucional (trabajo social, psicología, defensoría) es una aplicación práctica directa del marco normativo en la gestión docente."
+      },
+      {
+        id: "PHC2-R-047",
+        level: "R",
+        text: "El eje articulador 'Vida Saludable' en la NEM busca que los estudiantes sean conscientes y responsables de:",
+        options: ["Solo su rendimiento académico", "Su propio bienestar y el de su comunidad", "La competencia deportiva", "La memorización de dietas"],
+        correct: 1,
+        feedback: "El eje 'Vida Saludable' busca que los estudiantes sean conscientes y responsables de su propio bienestar y del de su comunidad, abarcando diversas dimensiones de la salud."
+      },
+      {
+        id: "PHC2-R-048",
+        level: "R",
+        text: "Promover que los alumnos escriban con un propósito real y para diversas audiencias (cartas, informes) es clave para el 'Uso Significativo del Lenguaje', un aspecto fundamental de:",
+        options: ["La evaluación sumativa", "Los ambientes alfabetizadores en la NEM", "La memorización de textos", "La enseñanza tradicional"],
+        correct: 1,
+        feedback: "Promover que los alumnos escriban con un propósito real y para diversas audiencias (cartas, informes) es clave para el 'Uso Significativo del Lenguaje', un aspecto fundamental de los ambientes alfabetizadores en la NEM."
+      }
+      // Add more questions here for levels E and P to reach 600+
+    ];
+
+    let currentMode = '';
+    let currentQuestions = [];
+    let currentQuestionIndex = 0;
+    let score = 0;
+    let timerInterval;
+    let timeLeft = 0;
+
+    function startQuiz(mode) {
+      currentMode = mode;
+      const levelMap = { 'Rápido': 'R', 'Estándar': 'E', 'Profesional': 'P' };
+      currentQuestions = questions.filter(q => q.level === levelMap[mode]).sort(() => Math.random() - 0.5).slice(0, 10); // Sample 10 questions
+      currentQuestionIndex = 0;
+      score = 0;
+      showQuizScreen();
+      loadQuestion();
+    }
+
+    function showQuizScreen() {
+      document.getElementById('start-screen').classList.add('hidden');
+      document.getElementById('quiz-screen').classList.remove('hidden');
+      document.getElementById('quiz-title').textContent = `Modo ${currentMode}`;
+    }
+
+    function loadQuestion() {
+      const question = currentQuestions[currentQuestionIndex];
+      document.getElementById('question-text').textContent = question.text;
+      document.getElementById('options').innerHTML = '';
+      question.options.forEach((option, i) => {
+        const btn = document.createElement('button');
+        btn.className = 'bg-gray-200 p-3 rounded-lg text-left hover:bg-gray-300';
+        btn.textContent = option;
+        btn.onclick = () => selectOption(i);
+        document.getElementById('options').appendChild(btn);
+      });
+      document.getElementById('feedback').classList.add('hidden');
+      document.getElementById('next-btn').classList.add('hidden');
+      updateProgressBar();
+      startTimer();
+    }
+
+    function startTimer() {
+      const times = { 'Rápido': 20, 'Estándar': 30, 'Profesional': 45 };
+      timeLeft = times[currentMode];
+      document.getElementById('timer').textContent = `Tiempo: ${timeLeft}s`;
+      clearInterval(timerInterval);
+      timerInterval = setInterval(() => {
+        timeLeft--;
+        document.getElementById('timer').textContent = `Tiempo: ${timeLeft}s`;
+        if (timeLeft <= 0) {
+          clearInterval(timerInterval);
+          selectOption(-1); // Time out
+        }
+      }, 1000);
+    }
+
+    function selectOption(index) {
+      clearInterval(timerInterval);
+      const question = currentQuestions[currentQuestionIndex];
+      const feedbackEl = document.getElementById('feedback');
+      feedbackEl.classList.remove('hidden');
+      if (index === -1) {
+        feedbackEl.textContent = '¡Tiempo agotado! ' + question.feedback;
+      } else if (index === question.correct) {
+        score++;
+        feedbackEl.textContent = '¡Correcto! ' + question.feedback;
+        feedbackEl.classList.add('text-green-600');
+      } else {
+        feedbackEl.textContent = 'Incorrecto. ' + question.feedback;
+        feedbackEl.classList.add('text-red-600');
+      }
+      document.getElementById('next-btn').classList.remove('hidden');
+    }
+
+    function nextQuestion() {
+      currentQuestionIndex++;
+      if (currentQuestionIndex < currentQuestions.length) {
+        loadQuestion();
+      } else {
+        showResults();
+      }
+    }
+
+    function updateProgressBar() {
+      const progress = ((currentQuestionIndex + 1) / currentQuestions.length) * 100;
+      document.getElementById('progress-bar').style.width = `${progress}%`;
+    }
+
+    function showResults() {
+      document.getElementById('quiz-screen').classList.add('hidden');
+      document.getElementById('results-screen').classList.remove('hidden');
+      document.getElementById('score').textContent = `Puntaje: ${score} de ${currentQuestions.length}`;
+    }
+
+    function restartQuiz() {
+      document.getElementById('results-screen').classList.add('hidden');
+      document.getElementById('start-screen').classList.remove('hidden');
+    }
+
+    function showAdminLogin() {
+      document.getElementById('start-screen').classList.add('hidden');
+      document.getElementById('admin-login').classList.remove('hidden');
+    }
+
+    function loginAdmin() {
+      const password = document.getElementById('admin-password').value;
+      if (simpleHash(password) === simpleHash('Vader2025')) {
+        document.getElementById('admin-login').classList.add('hidden');
+        document.getElementById('admin-panel').classList.remove('hidden');
+        renderQuestions();
+      } else {
+        alert('Contraseña incorrecta');
+      }
+    }
+
+    function showStartScreen() {
+      document.getElementById('admin-login').classList.add('hidden');
+      document.getElementById('admin-panel').classList.add('hidden');
+      document.getElementById('quiz-screen').classList.add('hidden');
+      document.getElementById('results-screen').classList.add('hidden');
+      document.getElementById('start-screen').classList.remove('hidden');
+    }
+
+    function renderQuestions() {
+      const filter = document.getElementById('level-filter').value;
+      const filteredQuestions = filter === 'all' ? questions : questions.filter(q => q.level === filter);
+      const list = document.getElementById('question-list');
+      list.innerHTML = '';
+      filteredQuestions.forEach(q => {
+        const div = document.createElement('div');
+        div.className = 'border p-4 mb-2 rounded';
+        div.innerHTML = `
+          <p><strong>ID:</strong> ${q.id} | <strong>Nivel:</strong> ${q.level}</p>
+          <p><strong>Pregunta:</strong> <input type="text" value="${q.text}" class="border p-1 w-full" onchange="updateQuestion('${q.id}', 'text', this.value)"></p>
+          ${q.options.map((opt, i) => `
+            <p><strong>Opción ${i + 1}:</strong> <input type="text" value="${opt}" class="border p-1 w-full" onchange="updateQuestion('${q.id}', 'options[${i}]', this.value)"> 
+            <input type="radio" name="correct-${q.id}" ${i === q.correct ? 'checked' : ''} onchange="updateQuestion('${q.id}', 'correct', ${i})"> Correcta</p>
+          `).join('')}
+          <p><strong>Retroalimentación:</strong> <input type="text" value="${q.feedback}" class="border p-1 w-full" onchange="updateQuestion('${q.id}', 'feedback', this.value)"></p>
+        `;
+        list.appendChild(div);
+      });
+    }
+
+    function updateQuestion(id, field, value) {
+      const question = questions.find(q => q.id === id);
+      if (field.startsWith('options[')) {
+        const index = parseInt(field.match(/\d+/)[0]);
+        question.options[index] = value;
+      } else if (field === 'correct') {
+        question.correct = value;
+      } else {
+        question[field] = value;
+      }
+    }
+  </script>
+</body>
+</html>
